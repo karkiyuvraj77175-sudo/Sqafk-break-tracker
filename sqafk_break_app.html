@@ -291,8 +291,7 @@ const EmployeeManagement = ({ db, authList, setStatusMessage }) => {
 
             const authDocRef = getAuthDocRef(db);
             // We update the 'list' field within the single configuration document
-            const setDocFunc = getGlobalFunc('setDoc');
-            await setDocFunc(authDocRef, { list: newAuthList });
+            await setDoc(authDocRef, { list: newAuthList });
 
             setNewEmail('');
             setNewName('');
@@ -325,8 +324,7 @@ const EmployeeManagement = ({ db, authList, setStatusMessage }) => {
             delete newAuthList[emailToRemove];
 
             const authDocRef = getAuthDocRef(db);
-            const setDocFunc = getGlobalFunc('setDoc');
-            await setDocFunc(authDocRef, { list: newAuthList });
+            await setDoc(authDocRef, { list: newAuthList });
 
             setStatusMessage(`Successfully removed ${emailToRemove}.`);
 
@@ -879,14 +877,6 @@ const AdminDashboard = ({ db, userId, allPunches, statusMessage, setStatusMessag
                 Admin Panel - SQAFK Tracker
             </h1>
             
-            {/* Web App Sharing Link Utility */}
-            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg shadow-inner">
-                <p className="font-bold text-indigo-700 mb-1">Web App Sharing Link (For Employees):</p>
-                <div className="text-xs font-mono bg-white p-2 rounded break-all text-indigo-900 border">
-                    {window.location.href}
-                </div>
-                <p className="text-xs mt-1 text-indigo-600">Copy the URL above and share it with your authorized team members.</p>
-            </div>
             
             {/* Tab Navigation */}
             <div className="flex border-b border-gray-200">
@@ -1095,7 +1085,7 @@ const App = () => {
     });
 
     return () => unsubscribeAuth();
-  }, [db, isAuthReady, userId, isAdmin, initializeAuthListAutomatically]); // Re-run when Auth state changes
+  }, [db, isAuthReady, userId, isAdmin, initializeAuthListAutomatically]); 
 
 
   // 3. Real-time Listener for Today's Punches (User View - Gated)
