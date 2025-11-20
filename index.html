@@ -29,10 +29,28 @@
         const { useState, useEffect, useCallback, useMemo } = React;
 
         // --- CONFIGURATION ---
+        // Embedded configuration - No setup screen required
+        const firebaseConfig = {
+            apiKey: "AIzaSyAtIxNmIAY13-Vfonn2lHsUCE5iaRWu2ZA",
+            authDomain: "break-tracker-b7803.firebaseapp.com",
+            projectId: "break-tracker-b7803",
+            storageBucket: "break-tracker-b7803.firebasestorage.app",
+            messagingSenderId: "891541913576",
+            appId: "1:891541913576:web:859b04ff0d64816e01ae5d",
+            measurementId: "G-E8EKPW0S12"
+        };
+
         const appId = 'sqafk-break-tracker';
         const ADMIN_ID = '17651586216758419693';
         const ADMIN_EMAIL = 'yuvraj.karki@bergtechnologies.co.in';
         const MAX_BREAK_MS = 3600000; // 1 hour
+
+        // Stabilized Firestore Path Components
+        const BREAK_PUNCHES_COLLECTION_PATH = `artifacts/${appId}/public/data/punches`;
+        const AUTH_CONFIG_COLLECTION_PATH = `artifacts/${appId}/public/data/config`;
+        const AUTH_DOCUMENT_ID = 'auth_list';
+
+        const getGlobalFunc = (name) => window.firebaseModules && window.firebaseModules[name];
 
         // --- DATA DEFAULTS ---
         const DEFAULT_AUTHORIZED_EMPLOYEES = {
@@ -129,39 +147,44 @@
 
         // --- COMPONENTS ---
 
-        const SetupScreen = ({ onSave }) => {
-            const [val, setVal] = useState('');
-            const [err, setErr] = useState('');
-            const save = () => {
-                try {
-                    let input = val.trim();
-                    // 1. Remove comments and leading 'const firebaseConfig ='
-                    input = input.replace(/\/\*[\s\S]*?\*\/|([^\\:])\/\/.*/g, '$1');
-                    input = input.replace(/const\s+firebaseConfig\s*=\s*/, '');
-                    input = input.slice(input.indexOf('{'), input.lastIndexOf('}') + 1);
-                    
-                    // 2. Add quotes to unquoted keys (e.g., apiKey -> "apiKey")
-                    let json = input.replace(/([a-zA-Z0-9_]+):/g, '"$1":');
-                    
-                    // 3. Remove trailing commas (critical for JSON parsing)
-                    json = json.replace(/,\s*([\]}])/g, '$1');
-                    
-                    const config = JSON.parse(json);
-                    if(!config.apiKey) throw new Error("Missing apiKey");
-                    localStorage.setItem('sqafk_firebase_config', JSON.stringify(config));
-                    onSave(config);
-                } catch(e) { 
-                    setErr("Invalid Config. Error: " + e.message + ". Ensure you copied the FULL object, including { and }."); 
+        const LoginScreen = ({ onLogin }) => {
+            const [email, setEmail] = useState('');
+            const [error, setError] = useState('');
+            
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const normalized = email.toLowerCase().trim();
+                if (DEFAULT_AUTHORIZED_EMPLOYEES[normalized] || normalized === ADMIN_EMAIL) {
+                    onLogin(normalized);
+                } else {
+                    setError('Access Denied: This email is not authorized.');
                 }
             };
+            
             return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                    <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-lg space-y-4">
-                        <h2 className="text-xl font-bold text-center text-blue-700">Connect Database</h2>
-                        <p className="text-sm text-gray-600">Paste your Firebase Config object below:</p>
-                        <textarea className="w-full h-32 p-2 border rounded text-xs font-mono" value={val} onChange={e=>setVal(e.target.value)} placeholder='{ "apiKey": "...", ... }'></textarea>
-                        {err && <p className="text-red-500 text-xs">{err}</p>}
-                        <button onClick={save} className="w-full py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">Connect</button>
+                    <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-lg space-y-6">
+                        <div className="text-center">
+                            <h1 className="text-3xl font-black text-blue-700">SQAFK</h1>
+                            <p className="text-gray-500 text-sm">Employee Break Tracker</p>
+                        </div>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Work Email</label>
+                                <input 
+                                    type="email" 
+                                    className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="name@bergtechnologies.co.in"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            {error && <p className="text-red-500 text-sm">{error}</p>}
+                            <button type="submit" className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition">
+                                Login
+                            </button>
+                        </form>
                     </div>
                 </div>
             );
@@ -224,8 +247,6 @@
 
         const AdminReport = ({ db, allPunches, authList, setStatusMessage }) => {
              const [filter, setFilter] = useState('');
-             const [messageDraft, setMessageDraft] = useState('');
-             const [isGenerating, setIsGenerating] = useState(false);
              
              const reportData = useMemo(() => {
                 const map = {};
@@ -266,30 +287,10 @@
                 } catch(e) { setStatusMessage("Cleanup Error"); }
              };
 
-             const handleGenerateMessage = async (item) => {
-                 setIsGenerating(true); setMessageDraft('');
-                 const statusText = item.totalBreakMs > MAX_BREAK_MS ? 'EXCEEDED LIMIT' : 'WITHIN LIMIT';
-                 // Mock AI call for stability
-                 setTimeout(() => {
-                     setMessageDraft(`Subject: Break Log Review - ${item.dateKey}\n\nDear ${item.employeeName},\n\nThis is regarding your break log for ${item.dateKey}. You took ${item.breakCount} breaks totaling ${item.totalBreakFormatted}. Compliance status: ${statusText}.\n\nBest,\nHR`);
-                     setIsGenerating(false);
-                     setStatusMessage("Draft generated.");
-                 }, 1000);
-            };
-
              const filteredData = reportData.filter(r => r.employeeName.toLowerCase().includes(filter.toLowerCase()) || r.dateKey.includes(filter));
 
              return (
                  <div className="space-y-4">
-                    {messageDraft && (
-                        <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                            <div className="bg-white rounded-xl p-6 space-y-4 w-full max-w-lg">
-                                <h3 className="text-xl font-bold">Draft Message</h3>
-                                <div className="p-3 bg-gray-100 rounded whitespace-pre-wrap">{messageDraft}</div>
-                                <button onClick={() => setMessageDraft('')} className="px-4 py-2 bg-gray-500 text-white rounded">Close</button>
-                            </div>
-                        </div>
-                    )}
                     <div className="flex justify-between items-center flex-wrap gap-2">
                         <h3 className="font-bold text-lg">Daily Report</h3>
                         <div className="flex gap-2">
@@ -301,7 +302,7 @@
                     <div className="overflow-x-auto border rounded-lg shadow-sm">
                         <table className="w-full text-sm text-left">
                             <thead className="bg-gray-100 font-bold text-gray-700">
-                                <tr><th className="p-3">Name</th><th className="p-3">Date</th><th className="p-3">Total Time</th><th className="p-3 text-center">Breaks</th><th className="p-3 text-center">Status</th><th className="p-3">Action</th></tr>
+                                <tr><th className="p-3">Name</th><th className="p-3">Date</th><th className="p-3">Total Time</th><th className="p-3 text-center">Breaks</th><th className="p-3 text-center">Status</th></tr>
                             </thead>
                             <tbody className="bg-white divide-y">
                                 {filteredData.map(row => (
@@ -311,7 +312,6 @@
                                         <td className={`p-3 font-mono font-bold ${row.totalBreakMs > MAX_BREAK_MS ? 'text-red-600' : 'text-gray-700'}`}>{row.totalBreakFormatted} {row.totalBreakMs > MAX_BREAK_MS && '⚠️'}</td>
                                         <td className="p-3 text-center">{row.breakCount}</td>
                                         <td className="p-3 text-center">{row.currentlyOnBreak ? 'ON BREAK' : 'Complete'}</td>
-                                        <td className="p-3"><button onClick={() => handleGenerateMessage(row)} className="px-2 py-1 bg-indigo-500 text-white text-xs rounded hover:bg-indigo-600">{isGenerating ? '...' : 'Draft'}</button></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -321,11 +321,11 @@
              );
         };
 
-        const AdminDashboard = ({ db, userId, allPunches, statusMessage, setStatusMessage, authList, isAuthReady, calculateTotalBreakTime }) => {
+        const AdminDashboard = ({ db, userId, allPunches, setAllPunches, statusMessage, setStatusMessage, authList, setAuthList, isAuthReady, calculateTotalBreakTime }) => {
             const [activeTab, setActiveTab] = useState('report');
             return (
                 <div className="p-4 md:p-8 bg-white rounded-xl shadow-2xl w-full max-w-5xl mx-auto space-y-6">
-                    <h1 className="text-3xl font-extrabold text-purple-700 tracking-tight border-b pb-3">Admin Panel</h1>
+                    <h1 className="text-3xl font-extrabold text-purple-700 border-b pb-3">Admin Panel</h1>
                     <p className="text-sm text-gray-500">{statusMessage}</p>
                     <div className="flex border-b">
                         <button onClick={() => setActiveTab('report')} className={`py-2 px-4 ${activeTab==='report'?'border-b-4 border-purple-600 text-purple-600':'text-gray-500'}`}>Report</button>
@@ -339,128 +339,128 @@
         };
 
         const App = () => {
-            const [user, setUser] = useState(null);
-            const [firebaseConfig, setFirebaseConfig] = useState(null);
-            const [status, setStatus] = useState('Initializing...');
-            const [authList, setAuthList] = useState({});
+            const [userEmail, setUserEmail] = useState(localStorage.getItem('sqafk_user_email') || null);
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
             const [punches, setPunches] = useState([]);
             const [allPunches, setAllPunches] = useState([]);
+            const [authList, setAuthList] = useState({});
             const [dailyTotal, setDailyTotal] = useState(0);
             const [dailyCount, setDailyCount] = useState(0);
             const [onBreak, setOnBreak] = useState(false);
             const [isAdminView, setIsAdminView] = useState(false);
-            const [isAuthorizedEmployee, setIsAuthorizedEmployee] = useState(false);
-            const [isAdmin, setIsAdmin] = useState(false);
-            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [status, setStatus] = useState('Initializing...');
 
+            // 1. Initialize Firebase
             useEffect(() => {
-                const saved = localStorage.getItem('sqafk_firebase_config');
-                if (saved) {
-                    try { setFirebaseConfig(JSON.parse(saved)); } catch (e) { localStorage.removeItem('sqafk_firebase_config'); }
-                }
-            }, []);
-
-            useEffect(() => {
-                if(!firebaseConfig) return;
-                const { initializeApp, getAuth, getFirestore, onAuthStateChanged, signInAnonymously, signInWithCustomToken } = window.firebaseModules;
+                const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged } = window.firebaseModules;
+                try { initializeApp(firebaseConfig); } catch(e) {} 
                 
-                try { initializeApp(firebaseConfig); } catch(e) {}
-                const auth = getAuth();
-                const db = getFirestore();
+                const _auth = getAuth();
+                const _db = getFirestore();
+                setAuth(_auth);
+                setDb(_db);
 
+                // Robust Auth Handling: Catch errors, force ready
                 const initAuth = async () => {
-                     setStatus('Authenticating...');
-                     try {
-                        const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                        if(token) await signInWithCustomToken(auth, token);
-                        else await signInAnonymously(auth);
-                     } catch(error) { setStatus('Auth Failed: ' + error.code); }
+                    try {
+                         // Try anonymous first as fallback
+                         await signInAnonymously(_auth);
+                    } catch (e) {
+                         console.warn("Auth weak fail (expected if auth disabled):", e.message);
+                    }
+                    setIsAuthReady(true);
                 };
                 initAuth();
 
-                onAuthStateChanged(auth, (u) => {
-                    if(u) {
-                        setUser(u);
-                        setStatus('Loading Data...');
-                        
-                        const { doc, onSnapshot, collection, query, where, setDoc } = window.firebaseModules;
-                        
-                        // Auth List Listener
-                        onSnapshot(doc(db, `artifacts/${appId}/public/data/config`, 'auth_list'), (snap) => {
-                            if(snap.exists()) {
-                                setAuthList(snap.data().list || {});
-                                const uid = u.uid;
-                                const email = u.email ? u.email.toLowerCase() : '';
-                                const isAdmin = (uid === ADMIN_ID || email === ADMIN_EMAIL);
-                                const isAuth = snap.data().list[uid] || snap.data().list[email] || isAdmin;
-                                setIsAuthorizedEmployee(!!isAuth);
-                                setIsAdmin(isAdmin);
-                            }
-                            else if(u.uid === ADMIN_ID || (u.email && u.email === ADMIN_EMAIL)) {
-                                setDoc(doc(db, `artifacts/${appId}/public/data/config`, 'auth_list'), { list: DEFAULT_AUTHORIZED_EMPLOYEES });
-                                setIsAuthorizedEmployee(true);
-                                setIsAdmin(true);
-                            } else {
-                                setAuthList({});
-                                setIsAuthorizedEmployee(false);
-                                setIsAdmin(false);
-                            }
-                        }, (err) => console.warn("Auth sync error:", err.code));
+            }, []);
 
-                        // User Punches
-                        const q = query(collection(db, `artifacts/${appId}/public/data/punches`), where("dateKey", "==", new Date().toISOString().slice(0,10)));
-                        
-                        onSnapshot(q, (snap) => {
-                            const p = [];
-                            snap.forEach(d => {
-                                const data = d.data();
-                                if(data.employeeId === u.uid || (u.email && data.employeeId === u.email.toLowerCase())) {
-                                    p.push(data);
-                                }
-                            });
-                            const { totalMs, breakCount, currentlyOnBreak } = calculateTotalBreakTime(p);
-                            setDailyTotal(totalMs); setDailyCount(breakCount); setOnBreak(currentlyOnBreak);
-                        });
+            // 2. Data Listeners
+            useEffect(() => {
+                if(!userEmail || !db || !isAuthReady) return;
 
-                        // Admin Punches
-                        if (u.uid === ADMIN_ID || u.email === ADMIN_EMAIL) {
-                             onSnapshot(query(collection(db, `artifacts/${appId}/public/data/punches`)), (snap) => {
-                                 const all = []; snap.forEach(d => all.push(d.data())); setAllPunches(all);
-                             });
-                        }
+                const { doc, collection, query, where, onSnapshot, setDoc } = window.firebaseModules;
+                
+                // Auth List Listener
+                const authRef = doc(db, `artifacts/${appId}/public/data/config`, 'auth_list');
+                const unsubAuth = onSnapshot(authRef, (snap) => {
+                    if(snap.exists()) {
+                        setAuthList(snap.data().list || {});
+                    } else if (userEmail === ADMIN_EMAIL) {
+                        // Auto-init if admin logs in and list missing
+                        setDoc(authRef, { list: DEFAULT_AUTHORIZED_EMPLOYEES });
+                        setAuthList(DEFAULT_AUTHORIZED_EMPLOYEES);
                     } else {
-                        setUser(null); setStatus('Signed Out');
-                        setIsAuthorizedEmployee(false);
-                        setIsAdmin(false);
+                        setAuthList({});
                     }
-                    setIsAuthReady(true);
-                });
-            }, [firebaseConfig]);
+                }, err => console.warn("Auth list read warning:", err.code));
 
-            const handlePunch = async (type) => {
-                const { addDoc, collection, getFirestore } = window.firebaseModules;
-                const db = getFirestore();
-                const id = user.email ? user.email.toLowerCase() : user.uid;
-                await addDoc(collection(db, `artifacts/${appId}/public/data/punches`), {
-                    employeeId: id, punchType: type, timestamp: new Date(), dateKey: new Date().toISOString().slice(0,10)
+                // User Punches
+                const today = getTodayDateKey();
+                const q = query(collection(db, `artifacts/${appId}/public/data/punches`), where("dateKey", "==", today));
+                
+                const unsubUser = onSnapshot(q, (snap) => {
+                    const p = [];
+                    snap.forEach(d => {
+                        const data = d.data();
+                        if (data.employeeId === userEmail) p.push(data);
+                    });
+                    const { totalMs, breakCount, currentlyOnBreak } = calculateTotalBreakTime(p);
+                    setDailyTotal(totalMs);
+                    setDailyCount(breakCount);
+                    setOnBreak(currentlyOnBreak);
                 });
+
+                // Admin Punches
+                let unsubAdmin = () => {};
+                if (userEmail === ADMIN_EMAIL) {
+                     const qa = query(collection(db, `artifacts/${appId}/public/data/punches`));
+                     unsubAdmin = onSnapshot(qa, (snap) => {
+                         const all = [];
+                         snap.forEach(d => all.push(d.data()));
+                         setAllPunches(all);
+                     });
+                }
+
+                return () => { unsubAuth(); unsubUser(); unsubAdmin(); };
+            }, [userEmail, db, isAuthReady]);
+
+            // Actions
+            const handleLogin = (email) => {
+                localStorage.setItem('sqafk_user_email', email);
+                setUserEmail(email);
             };
 
             const handleLogout = () => {
-                const { signOut, getAuth } = window.firebaseModules;
-                signOut(getAuth());
+                localStorage.removeItem('sqafk_user_email');
+                setUserEmail(null);
+                setIsAdminView(false);
             };
 
-            if(!firebaseConfig) return <SetupScreen onSave={setFirebaseConfig} />;
-            if(!user || !isAuthReady) return <div className="h-screen flex items-center justify-center text-gray-500">{status}</div>;
+            const handlePunch = async (type) => {
+                if (!db || !userEmail) return;
+                const { addDoc, collection } = window.firebaseModules;
+                try {
+                    await addDoc(collection(db, `artifacts/${appId}/public/data/punches`), {
+                        employeeId: userEmail,
+                        punchType: type,
+                        timestamp: new Date(),
+                        dateKey: getTodayDateKey()
+                    });
+                } catch(e) { setStatus("Punch Error: " + e.message); }
+            };
 
-            const isAdminCheck = (user.uid === ADMIN_ID || user.email === ADMIN_EMAIL);
-            
-            // Only re-calculate name if we have authList
-            const isAuth = authList[user.uid] || (user.email && authList[user.email.toLowerCase()]) || isAdminCheck;
-            const name = authList[user.email?.toLowerCase()]?.name || authList[user.uid]?.name || "User";
+            // RENDER
+            if (!isAuthReady) return <div className="h-screen flex items-center justify-center text-gray-500">Connecting to system...</div>;
+            if (!userEmail) return <LoginScreen onLogin={handleLogin} />;
 
-            if(!isAuth && !isAdminCheck && Object.keys(authList).length > 0) return (
+            const isAdmin = userEmail === ADMIN_EMAIL;
+            // If list loaded, check auth. If empty (first run), rely on static check for Admin init.
+            const isAuth = Object.keys(authList).length > 0 ? (authList[userEmail] || isAdmin) : (isAdmin || DEFAULT_AUTHORIZED_EMPLOYEES[userEmail]);
+            const employeeName = authList[userEmail]?.name || DEFAULT_AUTHORIZED_EMPLOYEES[userEmail]?.name || userEmail;
+
+            if (!isAuth) return (
                  <div className="h-screen flex items-center justify-center p-4 bg-gray-50">
                     <div className="bg-white p-8 rounded shadow text-center">
                         <h2 className="text-xl font-bold text-red-600 mb-2">Access Denied</h2>
@@ -470,7 +470,7 @@
                 </div>
             );
 
-            if(isAdminView && isAdminCheck) {
+            if (isAdminView && isAdmin) {
                 return (
                     <div className="min-h-screen p-4 flex justify-center bg-gray-100">
                         <div className="w-full max-w-6xl bg-white rounded-xl shadow p-6">
@@ -478,9 +478,9 @@
                                 <h1 className="text-2xl font-bold text-purple-700">Admin Panel</h1>
                                 <button onClick={() => setIsAdminView(false)} className="bg-gray-100 px-6 py-2 rounded-full hover:bg-gray-200 font-medium">Back to Timer</button>
                             </div>
-                            <EmployeeManagement db={window.firebaseModules.getFirestore()} authList={authList} setStatusMessage={setStatus} />
+                            <EmployeeManagement db={db} authList={authList} setStatusMessage={setStatus} />
                             <div className="my-8 border-t border-gray-100"></div>
-                            <AdminReport db={window.firebaseModules.getFirestore()} allPunches={allPunches} authList={authList} setStatusMessage={setStatus} />
+                            <AdminReport db={db} allPunches={allPunches} authList={authList} calculateTotalBreakTime={calculateTotalBreakTime} isAuthReady={isAuthReady} setStatusMessage={setStatus} />
                         </div>
                     </div>
                 );
@@ -489,28 +489,47 @@
             return (
                 <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
                     <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 space-y-8 relative">
-                        <div className="absolute top-4 right-4">
-                             <button onClick={handleLogout} className="text-gray-400 hover:text-red-500 text-xs font-medium transition">Logout</button>
-                        </div>
+                        <button onClick={handleLogout} className="absolute top-4 right-4 text-xs text-gray-400 hover:text-red-500">Logout</button>
+                        
                         <div className="text-center pb-2">
                             <h1 className="text-3xl font-black text-gray-800 tracking-tight mb-1">SQAFK</h1>
                             <p className="text-blue-600 font-medium text-sm uppercase tracking-widest">Break Tracker</p>
-                            <div className="mt-6 inline-block px-4 py-1 bg-gray-100 rounded-full text-sm font-medium text-gray-600">👋 Hi, {name.split(' ')[0]}</div>
+                            <div className="mt-6 inline-block px-4 py-1 bg-gray-100 rounded-full text-sm font-medium text-gray-600">👋 Hi, {employeeName.split(' ')[0]}</div>
                         </div>
+
                         <div className={`text-center p-6 rounded-2xl ${onBreak ? 'bg-red-50 ring-2 ring-red-100' : 'bg-green-50 ring-2 ring-green-100'}`}>
                             <p className="text-gray-500 font-medium text-xs uppercase tracking-wide mb-1">Total Break Time</p>
-                            <p className={`text-5xl font-black tabular-nums tracking-tight ${onBreak ? 'text-red-500' : 'text-green-600'}`}>{formatDuration(dailyTotal)}</p>
-                            <p className="text-sm font-medium text-gray-600 mt-4">{onBreak ? 'Currently Away' : 'Active / Working'}</p>
+                            <p className={`text-5xl font-black tabular-nums tracking-tight ${onBreak ? 'text-red-500' : 'text-green-600'}`}>
+                                {formatDuration(dailyTotal)}
+                            </p>
+                            <p className="text-sm font-medium text-gray-600 mt-4">
+                                {onBreak ? 'Currently Away' : 'Active / Working'}
+                            </p>
                         </div>
+
                         <div className="grid grid-cols-2 gap-4 pt-2">
-                             <div className="text-center p-3 bg-gray-50 rounded-xl"><p className="text-2xl font-bold text-gray-800">{dailyCount}</p><p className="text-xs text-gray-500 uppercase font-bold">Breaks</p></div>
-                             <div className="text-center p-3 bg-gray-50 rounded-xl"><p className="text-2xl font-bold text-gray-800">{new Date().toLocaleDateString(undefined, {weekday: 'short'})}</p><p className="text-xs text-gray-500 uppercase font-bold">Today</p></div>
+                             <div className="text-center p-3 bg-gray-50 rounded-xl">
+                                <p className="text-2xl font-bold text-gray-800">{dailyCount}</p>
+                                <p className="text-xs text-gray-500 uppercase font-bold">Breaks</p>
+                             </div>
+                             <div className="text-center p-3 bg-gray-50 rounded-xl">
+                                <p className="text-2xl font-bold text-gray-800">{new Date().toLocaleDateString(undefined, {weekday: 'short'})}</p>
+                                <p className="text-xs text-gray-500 uppercase font-bold">Today</p>
+                             </div>
                         </div>
+
                         <div className="grid grid-cols-2 gap-4">
                             <button onClick={() => handlePunch('IN')} disabled={onBreak} className={`py-4 rounded-xl font-bold text-white shadow-lg transform transition hover:-translate-y-0.5 ${onBreak ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' : 'bg-green-500'}`}>START BREAK</button>
                             <button onClick={() => handlePunch('OUT')} disabled={!onBreak} className={`py-4 rounded-xl font-bold text-white shadow-lg transform transition hover:-translate-y-0.5 ${!onBreak ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' : 'bg-red-500'}`}>END BREAK</button>
                         </div>
-                        {isAdmin && <div className="mt-8 text-center"><button onClick={() => setIsAdminView(true)} className="text-xs font-semibold text-purple-600 hover:text-purple-800 border-b border-purple-200 hover:border-purple-600">Access Admin Dashboard</button></div>}
+
+                        {isAdmin && (
+                            <div className="mt-8 text-center">
+                                <button onClick={() => setIsAdminView(true)} className="text-xs font-semibold text-purple-600 hover:text-purple-800 border-b border-purple-200 hover:border-purple-600">
+                                    Access Admin Dashboard
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             );
