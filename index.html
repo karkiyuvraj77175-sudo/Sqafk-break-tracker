@@ -16,7 +16,6 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, query, where, doc, getDoc, setDoc, onSnapshot, addDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Expose Firebase functions to the window object so React can use them
         window.firebaseModules = {
             initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
             getFirestore, collection, query, where, doc, getDoc, setDoc, onSnapshot, addDoc, getDocs, deleteDoc
@@ -96,6 +95,7 @@
 
         // --- UTILS ---
         const formatDuration = (ms) => {
+            if (!ms) return '00:00:00';
             const seconds = Math.floor(ms / 1000);
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
@@ -135,33 +135,30 @@
             const save = () => {
                 try {
                     let input = val.trim();
-                    if(input.includes('=')) input = input.split('=')[1].trim();
-                    if(input.endsWith(';')) input = input.slice(0, -1);
+                    // 1. Remove comments and leading 'const firebaseConfig ='
+                    input = input.replace(/\/\*[\s\S]*?\*\/|([^\\:])\/\/.*/g, '$1');
+                    input = input.replace(/const\s+firebaseConfig\s*=\s*/, '');
+                    input = input.slice(input.indexOf('{'), input.lastIndexOf('}') + 1);
                     
-                    // FIX: Automatically add quotes to property keys for valid JSON parsing
-                    let json = input.replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":');
+                    // 2. Add quotes to unquoted keys (e.g., apiKey -> "apiKey")
+                    let json = input.replace(/([a-zA-Z0-9_]+):/g, '"$1":');
                     
-                    // FIX: Handle the case where the measurementId often breaks JSON syntax due to no comma
-                    if (json.includes('measurementId') && !json.includes('}')) {
-                         json = json.replace(/("measurementId":.*)/, "$1,\"_fix\":true}"); // Add dummy field to fix trailing comma
-                    }
+                    // 3. Remove trailing commas (critical for JSON parsing)
+                    json = json.replace(/,\s*([\]}])/g, '$1');
                     
                     const config = JSON.parse(json);
                     if(!config.apiKey) throw new Error("Missing apiKey");
                     localStorage.setItem('sqafk_firebase_config', JSON.stringify(config));
                     onSave(config);
-                } catch(e) { setErr("Invalid Config. Error: " + e.message); }
+                } catch(e) { 
+                    setErr("Invalid Config. Error: " + e.message + ". Ensure you copied the FULL object, including { and }."); 
+                }
             };
             return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
                     <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-lg space-y-4">
                         <h2 className="text-xl font-bold text-center text-blue-700">Connect Database</h2>
-                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 text-sm text-yellow-700">
-                            <p><strong>Action Required:</strong></p>
-                            <p>1. Go to Firebase Console > Project Settings.</p>
-                            <p>2. Copy the full Config object (including the curly braces).</p>
-                            <p>3. Paste it below and click Connect.</p>
-                        </div>
+                        <p className="text-sm text-gray-600">Paste your Firebase Config object below:</p>
                         <textarea className="w-full h-32 p-2 border rounded text-xs font-mono" value={val} onChange={e=>setVal(e.target.value)} placeholder='{ "apiKey": "...", ... }'></textarea>
                         {err && <p className="text-red-500 text-xs">{err}</p>}
                         <button onClick={save} className="w-full py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">Connect</button>
@@ -232,13 +229,8 @@
              
              const reportData = useMemo(() => {
                 const map = {};
-                const nameMap = {};
-                
-                Object.values(authList).forEach(e => {
-                    if(e.email) nameMap[e.email.toLowerCase()] = e.name;
-                });
-                nameMap[ADMIN_ID] = 'Yuvraj Karki (Admin)';
-                nameMap[ADMIN_EMAIL] = 'Yuvraj Karki (Admin)';
+                const nameMap = Object.values(authList).reduce((acc, e) => { if(e.email) acc[e.email.toLowerCase()] = e.name; return acc; }, {});
+                nameMap[ADMIN_ID] = 'Yuvraj Karki (Admin)'; nameMap[ADMIN_EMAIL] = 'Yuvraj Karki (Admin)';
 
                 allPunches.forEach(p => {
                     let id = p.employeeId.toLowerCase();
@@ -329,11 +321,11 @@
              );
         };
 
-        const AdminDashboard = ({ db, userId, allPunches, setAllPunches, statusMessage, setStatusMessage, authList, setAuthList, isAuthReady, calculateTotalBreakTime }) => {
+        const AdminDashboard = ({ db, userId, allPunches, statusMessage, setStatusMessage, authList, isAuthReady, calculateTotalBreakTime }) => {
             const [activeTab, setActiveTab] = useState('report');
             return (
                 <div className="p-4 md:p-8 bg-white rounded-xl shadow-2xl w-full max-w-5xl mx-auto space-y-6">
-                    <h1 className="text-3xl font-extrabold text-purple-700 border-b pb-3">Admin Panel</h1>
+                    <h1 className="text-3xl font-extrabold text-purple-700 tracking-tight border-b pb-3">Admin Panel</h1>
                     <p className="text-sm text-gray-500">{statusMessage}</p>
                     <div className="flex border-b">
                         <button onClick={() => setActiveTab('report')} className={`py-2 px-4 ${activeTab==='report'?'border-b-4 border-purple-600 text-purple-600':'text-gray-500'}`}>Report</button>
@@ -382,7 +374,7 @@
                         const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
                         if(token) await signInWithCustomToken(auth, token);
                         else await signInAnonymously(auth);
-                     } catch (error) { setStatus('Auth Failed: ' + error.code); }
+                     } catch(error) { setStatus('Auth Failed: ' + error.code); }
                 };
                 initAuth();
 
@@ -402,18 +394,21 @@
                                 const isAdmin = (uid === ADMIN_ID || email === ADMIN_EMAIL);
                                 const isAuth = snap.data().list[uid] || snap.data().list[email] || isAdmin;
                                 setIsAuthorizedEmployee(!!isAuth);
+                                setIsAdmin(isAdmin);
                             }
                             else if(u.uid === ADMIN_ID || (u.email && u.email === ADMIN_EMAIL)) {
                                 setDoc(doc(db, `artifacts/${appId}/public/data/config`, 'auth_list'), { list: DEFAULT_AUTHORIZED_EMPLOYEES });
                                 setIsAuthorizedEmployee(true);
+                                setIsAdmin(true);
                             } else {
                                 setAuthList({});
                                 setIsAuthorizedEmployee(false);
+                                setIsAdmin(false);
                             }
                         }, (err) => console.warn("Auth sync error:", err.code));
 
                         // User Punches
-                        const q = query(collection(db, `artifacts/${appId}/public/data/punches`), where("dateKey", "==", getTodayDateKey()));
+                        const q = query(collection(db, `artifacts/${appId}/public/data/punches`), where("dateKey", "==", new Date().toISOString().slice(0,10)));
                         
                         onSnapshot(q, (snap) => {
                             const p = [];
@@ -436,6 +431,7 @@
                     } else {
                         setUser(null); setStatus('Signed Out');
                         setIsAuthorizedEmployee(false);
+                        setIsAdmin(false);
                     }
                     setIsAuthReady(true);
                 });
