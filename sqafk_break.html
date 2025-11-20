@@ -1,3 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQAFK Break Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load React and Babel for running the JSX code -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Load Firebase Modules (MUST be standard CDN imports for single file HTML) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, collection, query, where, doc, getDoc, setDoc, 
+            onSnapshot, addDoc, getDocs, deleteDoc 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase functions globally for the Babel/React script
+        window.initializeApp = initializeApp;
+        window.getAuth = getAuth;
+        window.signInAnonymously = signInAnonymously;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.signOut = signOut;
+        window.getFirestore = getFirestore;
+        window.collection = collection;
+        window.query = query;
+        window.where = where;
+        window.doc = doc;
+        window.getDoc = getDoc;
+        window.setDoc = setDoc;
+        window.onSnapshot = onSnapshot;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
+    </script>
+
+    <style>
+        /* Ensures the loading indicator is smooth */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        /* Custom scrollbar for log tables */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- The application logic (JSX) must be in a single block with Babel type -->
+    <script type="text/babel">
+    
 // --- The Entire Application Code (BreakPunchApp.jsx content) ---
 
 // --- Global Context and Setup ---
@@ -517,13 +589,10 @@ const AdminReporting = ({ db, allPunches, calculateTotalBreakTime, authList, isA
             const fifteenDaysAgo = new Date();
             fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
 
-            const punchesRef = getGlobalFunc('collection')(db, BREAK_PUNCHES_COLLECTION_PATH);
+            const punchesRef = collection(db, BREAK_PUNCHES_COLLECTION_PATH);
             
             // Fetch documents (client-side filter for stability)
-            const getDocsFunc = getGlobalFunc('getDocs');
-            const deleteDocFunc = getGlobalFunc('deleteDoc');
-
-            const snapshot = await getDocsFunc(getGlobalFunc('query')(punchesRef));
+            const snapshot = await getDocs(query(punchesRef));
 
             let deletedCount = 0;
             const batchPromises = [];
@@ -532,7 +601,7 @@ const AdminReporting = ({ db, allPunches, calculateTotalBreakTime, authList, isA
                 const timestamp = docSnap.data().timestamp?.toDate();
                 if (timestamp && timestamp < fifteenDaysAgo) {
                     // Delete the document
-                    batchPromises.push(deleteDocFunc(docSnap.ref));
+                    batchPromises.push(deleteDoc(docSnap.ref));
                     deletedCount++;
                 }
             });
@@ -1026,11 +1095,12 @@ const App = () => {
     });
 
     return () => unsubscribeAuth();
-  }, [db, isAuthReady, userId, isAdmin, initializeAuthListAutomatically]); 
+  }, [db, isAuthReady, userId, isAdmin, initializeAuthListAutomatically]); // Re-run when Auth state changes
 
 
   // 3. Real-time Listener for Today's Punches (User View - Gated)
   useEffect(() => {
+    // Wait until DB is ready, and user is confirmed authorized
     if (!db || !isAuthorizedEmployee || Object.keys(authList).length === 0) return; 
 
     const collectionFunc = getGlobalFunc('collection');
@@ -1047,10 +1117,11 @@ const App = () => {
     );
 
     const unsubscribeUser = onSnapshotFunc(userQuery, (snapshot) => {
+      // Filter & Sort client-side
       let fetchedPunches = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-      })).filter(punch => punch.employeeId === userId); 
+      })).filter(punch => punch.employeeId === userId); // Filter by current user ID
       
       fetchedPunches.sort((a, b) => 
         (a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime()) - 
@@ -1070,10 +1141,11 @@ const App = () => {
     });
 
     return () => unsubscribeUser();
-  }, [db, isAuthorizedEmployee, authList, userId]); 
+  }, [db, isAuthorizedEmployee, authList, userId]); // Depend on AuthList too
 
   // 4. Real-time Listener for ALL Punches (Admin View - Gated)
   useEffect(() => {
+    // Only run if the user is confirmed admin AND AuthList is loaded
     if (!db || !isAdmin || Object.keys(authList).length === 0) return; 
 
     const collectionFunc = getGlobalFunc('collection');
@@ -1089,6 +1161,7 @@ const App = () => {
         ...doc.data(),
       }));
       
+      // Client-side sorting for display consistency (newest first)
       fetchedAllPunches.sort((a, b) => 
           (b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp).getTime()) -
           (a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime())
@@ -1113,6 +1186,7 @@ const App = () => {
 
     if (loading) return;
     
+    // Simple validation logic
     if (type === 'IN' && lastPunchType === 'IN') {
       setStatusMessage("You are already on break. Punch OUT first.");
       return;
