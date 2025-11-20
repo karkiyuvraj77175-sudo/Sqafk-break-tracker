@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQAFK Break Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load React and Babel for running the JSX code -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Load Firebase Modules (MUST be standard CDN imports for single file HTML) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, collection, query, where, doc, getDoc, setDoc, 
+            onSnapshot, addDoc, getDocs, deleteDoc 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase functions globally for the Babel/React script
+        window.initializeApp = initializeApp;
+        window.getAuth = getAuth;
+        window.signInAnonymously = signInAnonymously;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.signOut = signOut;
+        window.getFirestore = getFirestore;
+        window.collection = collection;
+        window.query = query;
+        window.where = where;
+        window.doc = doc;
+        window.getDoc = getDoc;
+        window.setDoc = setDoc;
+        window.onSnapshot = onSnapshot;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
+    </script>
+
+    <style>
+        /* Ensures the loading indicator is smooth */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        /* Custom scrollbar for log tables */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- The application logic (JSX) must be in a single block with Babel type -->
+    <script type="text/babel">
+    
+// --- The Entire Application Code (BreakPunchApp.jsx content) ---
+
+// --- Global Context and Setup ---
+const { useState, useEffect, useCallback, useMemo } = React;
+
+// Use window scope for global variables initialized outside of the Babel script
+const appId = (() => {
+    try {
+        return typeof __app_id !== 'undefined' ? __app_id : 'sqafk-break-tracker';
+    } catch {
+        return 'sqafk-break-tracker';
+    }
+})();
+const firebaseConfig = (() => {
+    try {
+        return JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+    } catch {
+        return {};
+    }
+})();
+const initialAuthToken = (() => {
+    try {
+        return typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    } catch {
+        return null;
+    }
+})();
+
+
+// --- Constants ---
+const MAX_BREAK_MS = 3600000; // 1 hour in milliseconds
+const ADMIN_ID = '17651586216758419693'; 
+const ADMIN_EMAIL = 'yuvraj.karki@bergtechnologies.co.in'; 
+
+// Stabilized Firestore Path Components (using the standard 6-segment public path)
+const BREAK_PUNCHES_COLLECTION_PATH = `artifacts/${appId}/public/data/punches`;
+const AUTH_CONFIG_COLLECTION_PATH = `artifacts/${appId}/public/data/config`;
+const AUTH_DOCUMENT_ID = 'auth_list';
+
+// Helper to get global functions (necessary because they are defined outside this Babel scope)
+const getGlobalFunc = (name) => window[name];
+
+/**
+ * Robust helper function to correctly construct the Firestore document reference for 
+ * the authorization list using the safe, 6-segment public data path.
+ */
+const getAuthDocRef = (db) => {
+    const docFunc = getGlobalFunc('doc');
+    return docFunc(db, AUTH_CONFIG_COLLECTION_PATH, AUTH_DOCUMENT_ID);
+}
+
+
+// --- Employee Data Defaults (Used for Initial Setup Only) ---
+const DEFAULT_AUTHORIZED_EMPLOYEES = {
+  // Admin entry (UID and Email key must be included)
+  [ADMIN_ID]: { email: ADMIN_EMAIL, name: 'Yuvraj Karki (Admin)' },
+  [ADMIN_EMAIL]: { email: ADMIN_EMAIL, name: 'Yuvraj Karki (Admin)' },
+  
+  // Initial 53 employees from the list (Emails must be lowercase for consistent storage)
+  'aarti.singh@bergtechnologies.co.in': { name: 'Aarti Singh', email: 'aarti.singh@bergtechnologies.co.in' },
+  'abhilasha.abhilasha@bergtechnologies.co.in': { name: 'Abhilasha Abhilasha', email: 'abhilasha.abhilasha@bergtechnologies.co.in' },
+  'akriti.chandra@bergtechnologies.co.in': { name: 'Akriti Chandra', email: 'akriti.chandra@bergtechnologies.co.in' },
+  'aman.chandel@bergtechnologies.co.in': { name: 'Aman Chandel', email: 'aman.chandel@bergtechnologies.co.in' },
+  'anisha.singh@bergtechnologies.co.in': { name: 'Anisha Singh', email: 'anisha.singh@bergtechnologies.co.in' },
+  'amit.bandwal@bergtechnologies.co.in': { name: 'Amit Bandwal', email: 'amit.bandwal@bergtechnologies.co.in' },
+  'anchal.anchal@bergtechnologies.co.in': { name: 'Anchal Anchal', email: 'anchal.anchal@bergtechnologies.co.in' },
+  'anshuman.mamgain@bergtechnologies.co.in': { name: 'Anshuman Mamgain', email: 'anshuman.mamgain@bergtechnologies.co.in' },
+  'anuradha.rawat@bergtechnologies.co.in': { name: 'Anuradha Rawat', email: 'anuradha.rawat@bergtechnologies.co.in' },
+  'ayush.chauhan@bergtechnologies.co.in': { name: 'Ayush Chauhan', email: 'ayush.chauhan@bergtechnologies.co.in' },
+  'ayush.panwar@bergtechnologies.co.in': { name: 'Ayush Panwar', email: 'ayush.panwar@bergtechnologies.co.in' },
+  'ayush.singh@bergtechnologies.co.in': { name: 'Ayush Singh', email: 'ayush.singh@bergtechnologies.co.in' },
+  'badal.rana@bergtechnologies.co.in': { name: 'Badal Rana', email: 'badal.rana@bergtechnologies.co.in' },
+  'bhumi.vaish@bergtechnologies.co.in': { name: 'Bhumi Vaish', email: 'bhumi.vaish@bergtechnologies.co.in' },
+  'brijmohan.brijmohan@bergtechnologies.co.in': { name: 'Brijmohan Brijmohan', email: 'brijmohan.brijmohan@bergtechnologies.co.in' },
+  'gaurav.panwar@bergtechnologies.co.in': { name: 'Gaurav Panwar', email: 'gaurav.panwar@bergtechnologies.co.in' },
+  'himanshi.kandpal@bergtechnologies.co.in': { name: 'Himanshi Kandpal', email: 'himanshi.kandpal@bergtechnologies.co.in' },
+  'himanshu.mehta@bergtechnologies.co.in': { name: 'Himanshu Mehta', email: 'himanshu.mehta@bergtechnologies.co.in' },
+  'janvi.negi@bergtechnologies.co.in': { name: 'Janvi Negi', email: 'janvi.negi@bergtechnologies.co.in' },
+  'kanchan.negi@bergtechnologies.co.in': { name: 'Kanchan Negi', email: 'kanchan.negi@bergtechnologies.co.in' },
+  'kavita.negi@bergtechnologies.co.in': { name: 'Kavita Negi', email: 'kavita.negi@bergtechnologies.co.in' },
+  'khushi.uniyal@bergtechnologies.co.in': { name: 'Khushi Uniyal', email: 'khushi.uniyal@bergtechnologies.co.in' },
+  'manisha.tounk@bergtechnologies.co.in': { name: 'Manisha Tounk', email: 'manisha.tounk@bergtechnologies.co.in' },
+  'mohit.bhatt@bergtechnologies.co.in': { name: 'Mohit Bhatt', email: 'mohit.bhatt@bergtechnologies.co.in' },
+  'muskan.kala@bergtechnologies.co.in': { name: 'Muskan Kala', email: 'muskan.kala@bergtechnologies.co.in' },
+  'muskan.singh@bergtechnologies.co.in': { name: 'Muskan Singh', email: 'muskan.singh@bergtechnologies.co.in' },
+  'naman.walia@bergtechnologies.co.in': { name: 'Naman Walia', email: 'naman.walia@bergtechnologies.co.in' },
+  'neha.khatri@bergtechnologies.co.in': { name: 'Neha Khatri', email: 'neha.khatri@bergtechnologies.co.in' },
+  'nena.saini@bergtechnologies.co.in': { name: 'Nena Saini', email: 'nena.saini@bergtechnologies.co.in' },
+  'nikita.deori@bergtechnologies.co.in': { name: 'Nikita Deori', email: 'nikita.deori@bergtechnologies.co.in' },
+  'nitesha.sharma@bergtechnologies.co.in': { name: 'Nitesha Sharma', email: 'nitesha.sharma@bergtechnologies.co.in' },
+  'prashant.kumar1@bergtechnologies.co.in': { name: 'Prashant Kumar', email: 'prashant.kumar1@bergtechnologies.co.in' },
+  'praveen.praveen@bergtechnologies.co.in': { name: 'Praveen Praveen', email: 'praveen.praveen@bergtechnologies.co.in' },
+  'priti.kumari@bergtechnologies.co.in': { name: 'Priti Kumari', email: 'priti.kumari@bergtechnologies.co.in' },
+  'priya.bhatt@bergtechnologies.co.in': { name: 'Priya Bhatt', email: 'priya.bhatt@bergtechnologies.co.in' },
+  'priyal.yadav@bergtechnologies.co.in': { name: 'Priyal Yadav', email: 'priyal.yadav@bergtechnologies.co.in' },
+  'pushpraj.pandey@bergtechnologies.co.in': { name: 'Pushpraj Pandey', email: 'pushpraj.pandey@bergtechnologies.co.in' },
+  'radhika.radhika@bergtechnologies.co.in': { name: 'Radhika Radhika', email: 'radhika.radhika@bergtechnologies.co.in' },
+  'ragini.maurya@bergtechnologies.co.in': { name: 'Ragini Maurya', email: 'ragini.maurya@bergtechnologies.co.in' },
+  'reeni.prajapati@bergtechnologies.co.in': { name: 'Reeni Prajapati', email: 'reeni.prajapati@bergtechnologies.co.in' },
+  'rishabh.sharma@bergtechnologies.co.in': { name: 'Rishabh Sharma', email: 'rishabh.sharma@bergtechnologies.co.in' },
+  'sagar.chauhan@bergtechnologies.co.in': { name: 'Sagar Chauhan', email: 'sagar.chauhan@bergtechnologies.co.in' },
+  'sakshi.ghildiyal@bergtechnologies.co.in': { name: 'Sakshi Ghildiyal', email: 'sakshi.ghildiyal@bergtechnologies.co.in' },
+  'shailesh.rawat@bergtechnologies.co.in': { name: 'Shailesh Rawat', email: 'shailesh.rawat@bergtechnologies.co.in' },
+  'shivain.chamoli@bergtechnologies.co.in': { name: 'Shivain Chamoli', email: 'shivain.chamoli@bergtechnologies.co.in' },
+  'siddharth.pal@bergtechnologies.co.in': { name: 'Siddharth Pal', email: 'siddharth.pal@bergtechnologies.co.in' },
+  'sunaina.tiwari@bergtechnologies.co.in': { name: 'Sunaina Tiwari', email: 'sunaina.tiwari@bergtechnologies.co.in' },
+  'sushma.kumari@bergtechnologies.co.in': { name: 'Sushma Kumari', email: 'sushma.kumari@bergtechnologies.co.in' },
+  'vandana.chaudhary@bergtechnologies.co.in': { name: 'Vandana Chaudhary', email: 'vandana.chaudhary@bergtechnologies.co.in' },
+  'varun.baliyan@bergtechnologies.co.in': { name: 'Varun Baliyan', email: 'varun.baliyan@bergtechnologies.co.in' },
+  'vasudev.verma@bergtechnologies.co.in': { name: 'Vasudev Verma', email: 'vasudev.verma@bergtechnologies.co.in' },
+  'vipul.panwar@bergtechnologies.co.in': { name: 'Vipul Panwar', email: 'vipul.panwar@bergtechnologies.co.in' },
+  'vivek.kumar@bergtechnologies.co.in': { name: 'Vivek Kumar', email: 'vivek.kumar@bergtechnologies.co.in' },
+};
+
+
+// --- Helper Functions ---
+
+// Helper to format duration (ms to hh:mm:ss)
+const formatDuration = (ms) => {
+  const seconds = Math.floor(ms / 1000);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  
+  const pad = (num) => String(num).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+};
+
+// Helper to get today's date key (YYYY-MM-DD)
+const getTodayDateKey = () => {
+    return new Date().toISOString().slice(0, 10);
+};
+
+// Helper to convert array of objects to CSV string
+const convertToCSV = (data) => {
+    if (!data || data.length === 0) return '';
+    
+    const headers = ["Employee Name", "Date", "Breaks Completed", "Total Break Duration (HH:MM:SS)"];
+    const csvRows = [headers.join(',')];
+
+    for (const row of data) {
+        const values = [
+            `"${row.employeeName}"`,
+            row.dateKey,
+            row.breakCount,
+            row.totalBreakFormatted,
+        ];
+        csvRows.push(values.join(','));
+    }
+    return csvRows.join('\n');
+};
+
+
+// --- Core Logic for Total Break Calculation (Used by both Employee and Admin) ---
+const calculateTotalBreakTime = (currentPunches) => {
+    let totalMs = 0;
+    let lastInTime = null;
+    let breakCount = 0; 
+    let lastType = null;
+    
+    // Sort punches by time
+    const sortedPunches = [...currentPunches].sort((a, b) => 
+        (a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime()) - 
+        (b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp).getTime())
+    );
+
+    sortedPunches.forEach(punch => {
+      const timestamp = punch.timestamp?.toDate ? punch.timestamp.toDate().getTime() : new Date(punch.timestamp).getTime();
+      
+      if (punch.punchType === 'IN') {
+        lastInTime = timestamp;
+      } else if (punch.punchType === 'OUT' && lastInTime) {
+        totalMs += (timestamp - lastInTime);
+        lastInTime = null; 
+        breakCount += 1; 
+      }
+      lastType = punch.punchType;
+    });
+
+    let currentlyOnBreak = !!lastInTime;
+    
+    // Return the total duration, break count, and the current break status
+    return { totalMs, currentlyOnBreak, lastPunchType: currentlyOnBreak ? 'IN' : lastType, breakCount };
+};
+
+
+// --- Admin Dashboard: Employee Management Sub-Component (Nested) ---
+const EmployeeManagement = ({ db, authList, setStatusMessage }) => {
+    const [newEmail, setNewEmail] = useState('');
+    const [newName, setNewName] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleAddEmployee = async () => {
+        if (!newEmail || !newName || isSaving) return;
+        if (!db) {
+            setStatusMessage("Error: Database not initialized.");
+            return;
+        }
+
+        setIsSaving(true);
+        setStatusMessage(`Adding ${newName}...`);
+
+        try {
+            const normalizedEmail = newEmail.toLowerCase().trim();
+            const newAuthList = { ...authList };
+
+            // Prevent adding an employee if the email is already in the list
+            if (newAuthList[normalizedEmail]) {
+                setStatusMessage(`Error: Email ${normalizedEmail} is already in the authorized list.`);
+                setIsSaving(false);
+                return;
+            }
+
+            // Add the new employee to the list
+            newAuthList[normalizedEmail] = {
+                name: newName.trim(),
+                email: normalizedEmail
+            };
+
+            const authDocRef = getAuthDocRef(db);
+            // We update the 'list' field within the single configuration document
+            const setDocFunc = getGlobalFunc('setDoc');
+            await setDocFunc(authDocRef, { list: newAuthList });
+
+            setNewEmail('');
+            setNewName('');
+            setStatusMessage(`Successfully added ${newName}.`);
+
+        } catch (error) {
+            console.error("Error adding employee:", error);
+            setStatusMessage(`Failed to add employee: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+    
+    const handleRemoveEmployee = async (emailToRemove) => {
+        if (isSaving || !db) return;
+
+        // Prevent removing the admin
+        if (emailToRemove === ADMIN_EMAIL) {
+            setStatusMessage("Error: The primary admin email cannot be removed.");
+            return;
+        }
+
+        setIsSaving(true);
+        setStatusMessage(`Removing ${emailToRemove}...`);
+
+        try {
+            const newAuthList = { ...authList };
+            
+            // Remove the employee entry using the email as the key
+            delete newAuthList[emailToRemove];
+
+            const authDocRef = getAuthDocRef(db);
+            const setDocFunc = getGlobalFunc('setDoc');
+            await setDocFunc(authDocRef, { list: newAuthList });
+
+            setStatusMessage(`Successfully removed ${emailToRemove}.`);
+
+        } catch (error) {
+            console.error("Error removing employee:", error);
+            setStatusMessage(`Failed to remove employee: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const currentEmployees = useMemo(() => {
+        // Filter out the Admin entries (both UID and Email)
+        return Object.entries(authList)
+            .filter(([key]) => key !== ADMIN_ID && key !== ADMIN_EMAIL) 
+            .map(([key, value]) => ({ 
+                idKey: key, 
+                name: value.name, 
+                email: value.email 
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [authList]);
+
+    // Check if the authList document is loaded but empty (needs setup)
+    const needsSetup = Object.keys(authList).length === 0;
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-700 border-b pb-2">Manage Employee Access</h2>
+
+            {/* Setup Warning and Button */}
+            {needsSetup && (
+                <div className="p-4 bg-red-100 border border-red-400 text-red-800 rounded-lg shadow-md space-y-3">
+                    <p className="font-bold">CRITICAL SETUP REQUIRED:</p>
+                    <p>The employee authorization list is empty. The application will automatically attempt to initialize the default list upon the Admin's first successful login.</p>
+                    <p className="text-sm">If the list does not load after a moment, please check the status message at the top of the screen.</p>
+                </div>
+            )}
+
+            {/* Add Employee Form (Only visible after setup) */}
+            {!needsSetup && (
+                <div className="p-4 bg-gray-50 rounded-lg shadow-inner space-y-3">
+                    <h3 className="text-lg font-semibold text-purple-700">Add New Authorized Employee</h3>
+                    <div className="flex flex-col md:flex-row gap-4">
+                        <input
+                            type="email"
+                            placeholder="Employee Email (login ID)"
+                            value={newEmail}
+                            onChange={(e) => setNewEmail(e.target.value)}
+                            className="flex-grow p-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+                            disabled={isSaving}
+                        />
+                        <input
+                            type="text"
+                            placeholder="Employee Full Name"
+                            value={newName}
+                            onChange={(e) => setNewName(e.target.value)}
+                            className="flex-grow p-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+                            disabled={isSaving}
+                        />
+                        <button
+                            onClick={handleAddEmployee}
+                            disabled={isSaving || !newEmail || !newName}
+                            className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:bg-gray-400 transition"
+                        >
+                            {isSaving ? 'Adding...' : 'Add Employee'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Employee List Table */}
+            <div>
+                <h3 className="text-lg font-semibold text-gray-700 mb-3">Current Authorized Users ({currentEmployees.length})</h3>
+                <div className="max-h-96 overflow-y-auto border rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-100 sticky top-0">
+                            <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Login Email/ID</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {currentEmployees.map((emp) => (
+                                <tr key={emp.idKey}>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{emp.name}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{emp.email}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-center">
+                                        {emp.email === ADMIN_EMAIL ? (
+                                            <span className="text-purple-600 font-semibold text-xs">Primary Admin</span>
+                                        ) : (
+                                            <button 
+                                                onClick={() => handleRemoveEmployee(emp.email)}
+                                                disabled={isSaving}
+                                                className="text-red-500 hover:text-red-700 font-medium text-xs disabled:text-gray-400"
+                                            >
+                                                {isSaving ? 'Processing...' : 'Remove'}
+                                            </button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                            {currentEmployees.length === 0 && !needsSetup && (
+                                <tr>
+                                    <td colSpan="3" className="text-center py-4 text-gray-500">No employees authorized yet. Add an employee above.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// --- Admin Dashboard: Reporting Sub-Component (Nested) ---
+const AdminReporting = ({ db, allPunches, calculateTotalBreakTime, authList, isAuthReady, setStatusMessage }) => {
+    
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [messageDraft, setMessageDraft] = useState('');
+
+    // Convert authList to a name map for efficient reporting
+    const currentEmployeeNameMap = useMemo(() => {
+        return Object.values(authList).reduce((acc, emp) => {
+            if (emp.email) {
+                acc[emp.email.toLowerCase()] = emp.name; // Use lowercase email for matching
+            }
+            if (emp.email === ADMIN_EMAIL) {
+                acc[ADMIN_ID] = emp.name; // Ensure admin UID is mapped
+            }
+            return acc;
+        }, {});
+    }, [authList]);
+
+
+    // Only proceed with aggregation if authList is ready and populated
+    const isReady = isAuthReady && Object.keys(authList).length > 0;
+    
+    const [report, setReport] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [sortConfig, setSortConfig] = useState({ key: 'dateKey', direction: 'descending' });
+
+    // Aggregation Logic
+    useEffect(() => {
+        if (!allPunches || !isReady) {
+             setLoading(false);
+             return;
+        }
+
+        setLoading(true);
+        const dailyBreaksMap = new Map(); 
+        
+        // 1. Group raw punches by employee and day
+        allPunches.forEach(punch => {
+            // Determine the ID used for the map check (use lowercased email or the UID)
+            const punchId = punch.employeeId.toLowerCase(); 
+            
+            // Only aggregate if the employee is currently in the authorized list or is admin UID
+            if (!currentEmployeeNameMap[punchId] && punch.employeeId !== ADMIN_ID) {
+                return; // Skip punches from unauthorized/removed users
+            }
+            
+            const key = `${punchId}_${punch.dateKey}`;
+            if (!dailyBreaksMap.has(key)) {
+                dailyBreaksMap.set(key, { 
+                    employeeId: punchId, 
+                    dateKey: punch.dateKey, 
+                    punches: [] 
+                });
+            }
+            dailyBreaksMap.get(key).punches.push(punch);
+        });
+
+        const newReport = Array.from(dailyBreaksMap.values()).map(dailyData => {
+            // 2. Calculate the total break time and count
+            const { totalMs, currentlyOnBreak, breakCount } = calculateTotalBreakTime(dailyData.punches);
+            
+            // Look up the employee name
+            const name = dailyData.employeeId === ADMIN_ID ? 'Yuvraj Karki (Admin)' : (currentEmployeeNameMap[dailyData.employeeId] || 'Unknown Employee');
+
+            return {
+                employeeId: dailyData.employeeId,
+                employeeName: name, 
+                dateKey: dailyData.dateKey,
+                totalBreakMs: totalMs,
+                totalBreakFormatted: formatDuration(totalMs),
+                currentlyOnBreak: currentlyOnBreak,
+                breakCount: breakCount, 
+            };
+        });
+
+        setReport(newReport);
+        setLoading(false);
+    }, [allPunches, currentEmployeeNameMap, calculateTotalBreakTime, isReady]);
+
+
+    // Sorting Logic (same as before)
+    const sortedReport = useMemo(() => {
+        let sortableItems = [...report];
+        if (sortConfig.key !== null) {
+            sortableItems.sort((a, b) => {
+                let aVal = a[sortConfig.key];
+                let bVal = b[sortConfig.key];
+                
+                const isNumeric = (key) => key === 'totalBreakMs' || key === 'breakCount';
+                
+                if (isNumeric(sortConfig.key)) {
+                    aVal = a[sortConfig.key];
+                    bVal = b[sortConfig.key];
+                } else {
+                    aVal = String(aVal);
+                    bVal = String(bVal);
+                }
+                
+                if (aVal < bVal) {
+                    return sortConfig.direction === 'ascending' ? -1 : 1;
+                }
+                if (aVal > bVal) {
+                    return sortConfig.direction === 'ascending' ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return sortableItems;
+    }, [report, sortConfig]);
+
+    const requestSort = (key) => {
+        let direction = 'ascending';
+        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+            direction = 'descending';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortIndicator = (key) => {
+        if (sortConfig.key !== key) return '';
+        return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
+    };
+    
+    // Determine text color based on break length (1 hour threshold)
+    const getBreakColor = (totalMs, onBreak) => {
+        if (totalMs > MAX_BREAK_MS) {
+            return 'text-red-600 font-bold'; // Exceeded 1 hour
+        }
+        return onBreak ? 'text-yellow-600' : 'text-green-600';
+    };
+
+    // --- Admin Tools Functions ---
+
+    // 1. 15-Day Cleanup Tool
+    const handleCleanup = async () => {
+        if (!db) return;
+        // NOTE: window.confirm used only in Admin Tool, consistent with instructions
+        if (!window.confirm("Are you sure you want to delete ALL break logs older than 15 days? This action cannot be undone.")) return;
+
+        setStatusMessage("Starting 15-day data cleanup...");
+        try {
+            const fifteenDaysAgo = new Date();
+            fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+
+            const punchesRef = getGlobalFunc('collection')(db, BREAK_PUNCHES_COLLECTION_PATH);
+            
+            // Fetch documents (client-side filter for stability)
+            const getDocsFunc = getGlobalFunc('getDocs');
+            const deleteDocFunc = getGlobalFunc('deleteDoc');
+
+            const snapshot = await getDocsFunc(getGlobalFunc('query')(punchesRef));
+
+            let deletedCount = 0;
+            const batchPromises = [];
+            
+            snapshot.docs.forEach((docSnap) => {
+                const timestamp = docSnap.data().timestamp?.toDate();
+                if (timestamp && timestamp < fifteenDaysAgo) {
+                    // Delete the document
+                    batchPromises.push(deleteDocFunc(docSnap.ref));
+                    deletedCount++;
+                }
+            });
+
+            await Promise.all(batchPromises);
+            
+            setStatusMessage(`Cleanup complete. Deleted ${deletedCount} records older than 15 days.`);
+        } catch (error) {
+            console.error("Cleanup error:", error);
+            setStatusMessage(`Cleanup Failed: ${error.message}. Check console.`);
+        }
+    };
+
+    // 2. 10-Day Export Tool
+    const handleExport = async () => {
+        if (!db || report.length === 0) {
+            setStatusMessage("No data to export or DB not ready.");
+            return;
+        }
+
+        setStatusMessage("Preparing 10-day report...");
+        try {
+            // Calculate 10 days ago date key (YYYY-MM-DD)
+            const tenDaysAgo = new Date();
+            tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+            const tenDaysAgoString = tenDaysAgo.toISOString().slice(0, 10);
+
+
+            // Filter the current aggregated report for the last 10 days
+            const exportData = sortedReport.filter(item => item.dateKey >= tenDaysAgoString);
+            
+            if (exportData.length === 0) {
+                setStatusMessage("No break data found in the last 10 days to export.");
+                return;
+            }
+
+            const csv = convertToCSV(exportData);
+            
+            // Trigger download
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `SQAFK_Break_Report_${getTodayDateKey()}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setStatusMessage(`Successfully exported ${exportData.length} records for the last 10 days.`);
+
+        } catch (error) {
+            console.error("Export error:", error);
+            setStatusMessage(`Export Failed: ${error.message}. Check console.`);
+        }
+    };
+
+    // 3. Gemini AI Communication Draft Tool
+    const handleGenerateMessage = async (reportItem) => {
+        setIsGenerating(true);
+        setMessageDraft('');
+        
+        const complianceStatus = reportItem.totalBreakMs > MAX_BREAK_MS ? 'EXCEEDED 1-HOUR LIMIT' : 'WITHIN 1-HOUR LIMIT';
+        const tone = complianceStatus === 'EXCEEDED 1-HOUR LIMIT' ? 'firm but professional reminder' : 'positive and brief acknowledgement';
+        
+        const systemPrompt = `You are a professional HR assistant. Draft a concise, single paragraph internal chat message based on the provided break data. The tone must be ${tone}. Do not use emojis or excessive greetings.`;
+
+        const userQuery = `Draft a message for employee "${reportItem.employeeName}" regarding their break log on ${reportItem.dateKey}. Status: ${complianceStatus}. Total break time: ${reportItem.totalBreakFormatted}. Break count: ${reportItem.breakCount}.`;
+
+        setStatusMessage(`Generating draft for ${reportItem.employeeName}...`);
+
+        const apiKey = ""; 
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        // Implement Exponential Backoff for API calls
+        const maxRetries = 3;
+        let attempt = 0;
+
+        while (attempt < maxRetries) {
+            try {
+                const payload = {
+                    contents: [{ parts: [{ text: userQuery }] }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (text) {
+                    setMessageDraft(text);
+                    setStatusMessage(`Draft generated for ${reportItem.employeeName}.`);
+                    break; // Success, exit loop
+                } else {
+                    throw new Error("API returned no text content.");
+                }
+
+            } catch (error) {
+                attempt++;
+                if (attempt >= maxRetries) {
+                    console.error("Gemini API call failed after multiple retries:", error);
+                    setMessageDraft("Failed to generate message draft due to API error. Please check the console for details.");
+                    setStatusMessage("AI generation failed.");
+                    break;
+                }
+                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+        setIsGenerating(false);
+    };
+
+
+    return (
+        <div className="space-y-4">
+            
+            {/* AI Generated Message Draft Modal */}
+            {messageDraft && (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl p-6 space-y-4">
+                        <h3 className="text-xl font-bold text-gray-800 border-b pb-2">AI Communication Draft</h3>
+                        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg whitespace-pre-wrap text-gray-700">
+                            {messageDraft}
+                        </div>
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setMessageDraft('')}
+                                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            <h2 className="text-2xl font-bold text-gray-700 border-b pb-2">Daily Break Summary</h2>
+
+            {/* Admin Tools Row */}
+            <div className="flex flex-wrap gap-4 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <button 
+                    onClick={handleExport}
+                    disabled={loading || !isReady}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-gray-400"
+                >
+                    Download Last 10 Days Report (CSV)
+                </button>
+                <button 
+                    onClick={handleCleanup}
+                    disabled={loading || !isReady}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition disabled:bg-gray-400"
+                >
+                    Run 15-Day Data Cleanup
+                </button>
+            </div>
+            
+            {!isReady ? (
+                <div className="text-center py-10 text-lg text-gray-500">Waiting for Authorization List to load...</div>
+            ) : loading ? (
+                <div className="text-center py-10 text-lg text-gray-500">Aggregating employee break data...</div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th onClick={() => requestSort('employeeName')} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer rounded-tl-lg">
+                                    Employee Name{getSortIndicator('employeeName')}
+                                </th>
+                                <th onClick={() => requestSort('dateKey')} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer">
+                                    Date{getSortIndicator('dateKey')}
+                                </th>
+                                <th onClick={() => requestSort('breakCount')} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer">
+                                    Breaks{getSortIndicator('breakCount')}
+                                </th>
+                                <th onClick={() => requestSort('totalBreakMs')} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer">
+                                    Total Break{getSortIndicator('totalBreakMs')}
+                                </th>
+                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-tr-lg">
+                                    Action
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {sortedReport.map((item, index) => (
+                                <tr key={item.employeeId + item.dateKey} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                    <td className="px-3 py-4 whitespace-nowrap text-sm font-bold text-gray-900 truncate max-w-xs">
+                                        {item.employeeName}
+                                        <div className="text-xs font-mono text-gray-400 mt-1">
+                                            {item.currentlyOnBreak ? <span className="text-yellow-600 font-semibold">On Break</span> : 'Available'}
+                                        </div>
+                                    </td>
+                                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-600">{item.dateKey}</td>
+                                    <td className="px-3 py-4 whitespace-nowrap text-sm font-semibold text-center">{item.breakCount}</td>
+                                    <td className={`px-3 py-4 whitespace-nowrap text-sm font-semibold ${getBreakColor(item.totalBreakMs, item.currentlyOnBreak)}`}>
+                                        {item.totalBreakFormatted}
+                                        {item.totalBreakMs > MAX_BREAK_MS && <span className="text-red-600 font-extrabold ml-2">(!)</span>}
+                                    </td>
+                                    <td className="px-3 py-4 whitespace-nowrap">
+                                        <button
+                                            onClick={() => handleGenerateMessage(item)}
+                                            disabled={isGenerating}
+                                            className="px-3 py-1 text-xs bg-indigo-500 text-white rounded-full font-semibold hover:bg-indigo-600 transition disabled:bg-gray-400"
+                                            title="Generate a draft message using Gemini AI"
+                                        >
+                                            {isGenerating ? 'Generating...' : '✨ Draft Message'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {sortedReport.length === 0 && (
+                                <tr>
+                                    <td colSpan="5" className="text-center py-4 text-gray-500">No break data found for authorized employees.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+// --- Admin Dashboard Component ---
+const AdminDashboard = ({ db, userId, allPunches, statusMessage, setStatusMessage, authList, isAuthReady, calculateTotalBreakTime }) => {
+    
+    // Simple state to control which admin view is active
+    const [activeTab, setActiveTab] = useState('report'); 
+
+    // Tabs data
+    const tabs = [
+        { id: 'report', label: 'Break Report' },
+        { id: 'manage', label: 'Manage Employee Access' }
+    ];
+
+    // Determine what content to render based on the active tab
+    const renderContent = () => {
+        switch (activeTab) {
+            case 'report':
+                return (
+                    <AdminReporting 
+                        db={db}
+                        allPunches={allPunches} 
+                        calculateTotalBreakTime={calculateTotalBreakTime} 
+                        authList={authList}
+                        isAuthReady={isAuthReady}
+                        setStatusMessage={setStatusMessage}
+                    />
+                );
+            case 'manage':
+                return (
+                    <EmployeeManagement 
+                        db={db} 
+                        authList={authList} 
+                        setStatusMessage={setStatusMessage}
+                    />
+                );
+            default:
+                return null;
+        }
+    };
+
+    return (
+        <div className="p-4 md:p-8 bg-white rounded-xl shadow-2xl w-full max-w-5xl mx-auto space-y-6">
+            <h1 className="text-3xl font-extrabold text-purple-700 tracking-tight border-b pb-3">
+                Admin Panel - SQAFK Tracker
+            </h1>
+            
+            {/* Web App Sharing Link Utility */}
+            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg shadow-inner">
+                <p className="font-bold text-indigo-700 mb-1">Web App Sharing Link (For Employees):</p>
+                <div className="text-xs font-mono bg-white p-2 rounded break-all text-indigo-900 border">
+                    {window.location.href}
+                </div>
+                <p className="text-xs mt-1 text-indigo-600">Copy the URL above and share it with your authorized team members.</p>
+            </div>
+            
+            {/* Tab Navigation */}
+            <div className="flex border-b border-gray-200">
+                {tabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`py-2 px-4 text-sm font-semibold transition-colors duration-150 
+                            ${activeTab === tab.id 
+                                ? 'border-b-4 border-purple-600 text-purple-600' 
+                                : 'text-gray-500 hover:text-gray-700'}`
+                        }
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Content Display */}
+            <div className="pt-4">
+                {renderContent()}
+            </div>
+            
+        </div>
+    );
+};
+
+
+// --- Main Application Component (App) ---
+const App = () => {
+  // Authentication State
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false); // New gate for DB access
+  const [isAuthorizedEmployee, setIsAuthorizedEmployee] = useState(false); 
+
+  // Data State
+  const [loading, setLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState('Initializing application...');
+  const [punches, setPunches] = useState([]); // Today's punches for current user
+  const [allPunches, setAllPunches] = useState([]); // All punches for admin view
+  const [authList, setAuthList] = useState({}); // Dynamic authorization map
+
+  // Employee View Calculated State
+  const [dailyBreakCount, setDailyBreakCount] = useState(0); 
+  const [lastPunchType, setLastPunchType] = useState(null);
+  const [totalBreakMs, setTotalBreakMs] = useState(0);
+  
+  // View State
+  const [isAdmin, setIsAdmin] = useState(false); // Confirmed Admin role
+  const [isAdminView, setIsAdminView] = useState(false); // Admin toggled view
+
+  
+  // 1. Initialize Firebase and Authenticate
+  useEffect(() => {
+    if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+      console.error("Firebase configuration is missing.");
+      setStatusMessage("Error: Firebase configuration missing.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Use exposed global functions
+      const initializeAppFunc = getGlobalFunc('initializeApp');
+      const getAuthFunc = getGlobalFunc('getAuth');
+      const getFirestoreFunc = getGlobalFunc('getFirestore');
+      const signInWithCustomTokenFunc = getGlobalFunc('signInWithCustomToken');
+      const signInAnonymouslyFunc = getGlobalFunc('signInAnonymously');
+      const onAuthStateChangedFunc = getGlobalFunc('onAuthStateChanged');
+
+      const firebaseApp = initializeAppFunc(firebaseConfig);
+      const firestore = getFirestoreFunc(firebaseApp);
+      const firebaseAuth = getAuthFunc(firebaseApp);
+
+      setDb(firestore);
+      setAuth(firebaseAuth);
+
+      const signIn = async () => {
+        try {
+          if (initialAuthToken) {
+            await signInWithCustomTokenFunc(firebaseAuth, initialAuthToken);
+          } else {
+            await signInAnonymouslyFunc(firebaseAuth);
+          }
+        } catch (error) {
+          console.error("Firebase Auth Error:", error);
+          setStatusMessage(`Authentication Failed: ${error.code}`);
+        }
+      };
+
+      signIn();
+      
+      // Listen for auth state changes
+      const unsubscribe = onAuthStateChangedFunc(firebaseAuth, (user) => {
+        if (user) {
+          const currentUserId = user.uid;
+          setUserId(currentUserId);
+          
+          const isCurrentAdmin = (currentUserId === ADMIN_ID || user.email?.toLowerCase() === ADMIN_EMAIL);
+          setIsAdmin(isCurrentAdmin);
+          setIsAdminView(isCurrentAdmin); 
+          
+          setStatusMessage(`Authenticated as: ${currentUserId}`);
+        } else {
+          setUserId(null);
+          setStatusMessage('Awaiting sign-in...');
+        }
+        setIsAuthReady(true); 
+        setLoading(false); 
+      });
+
+      return () => unsubscribe();
+      
+    } catch (e) {
+      console.error("Initialization error:", e);
+      setStatusMessage(`Initialization Error: ${e.message}`);
+      setLoading(false);
+    }
+  }, []);
+
+  // Handler for Log Out
+  const handleLogout = useCallback(() => {
+      const signOutFunc = getGlobalFunc('signOut');
+      if (auth) {
+          signOutFunc(auth).then(() => {
+              setStatusMessage("Signed out successfully. Refresh to log back in.");
+          }).catch((error) => {
+              console.error("Logout error:", error);
+              setStatusMessage(`Logout failed: ${error.message}`);
+          });
+      }
+  }, [auth]);
+
+
+  // --- Automated Setup Logic ---
+  const initializeAuthListAutomatically = useCallback(async (currentAuthList) => {
+    // Only proceed if Admin AND authList is not populated
+    if (!db || !isAdmin || Object.keys(currentAuthList).length > 0) return;
+    
+    setStatusMessage("CRITICAL: Initializing default employee list automatically...");
+    
+    try {
+        const authDocRef = getAuthDocRef(db);
+        const setDocFunc = getGlobalFunc('setDoc');
+        
+        // Force create the document with the default list
+        await setDocFunc(authDocRef, { list: DEFAULT_AUTHORIZED_EMPLOYEES });
+        // The onSnapshot listener will pick up the change and update the state
+        setStatusMessage("Default employee list successfully initialized automatically. App is ready.");
+    } catch (error) {
+        console.error("Error during automated initialization:", error);
+        setStatusMessage(`Automated Setup Failed: ${error.message}. Please refresh the app.`);
+    }
+  }, [db, isAdmin, setStatusMessage]);
+
+
+  // 2. Real-time Listener for Authorization List (Gated by Auth Ready)
+  useEffect(() => {
+    // Only proceed if DB is ready AND Auth process is complete
+    if (!db || !isAuthReady) return; 
+
+    const authDocRef = getAuthDocRef(db);
+    const onSnapshotFunc = getGlobalFunc('onSnapshot');
+    
+    const unsubscribeAuth = onSnapshotFunc(authDocRef, (docSnap) => {
+        if (docSnap.exists() && docSnap.data().list) {
+            const listData = docSnap.data().list;
+            setAuthList(listData);
+            
+            // Re-check authorization status when list updates
+            const userCred = userId?.toLowerCase() || '';
+            const isAllowed = listData[userCred] || listData[userId];
+            setIsAuthorizedEmployee(!!isAllowed);
+            
+            const userName = listData[userCred]?.name || listData[userId]?.name;
+
+            if (!isAllowed) {
+                 setStatusMessage(`Access Denied: Your ID (${userId}) is not authorized.`);
+            } else {
+                setStatusMessage(`Authenticated as: ${userName || userId}`);
+            }
+
+        } else {
+            // Document does not exist (needs setup)
+            setAuthList({});
+            setIsAuthorizedEmployee(false);
+
+            // Trigger automatic initialization if Admin and list is empty
+            if (isAdmin) {
+                initializeAuthListAutomatically({});
+            } else {
+                setStatusMessage("Access Denied: Waiting for administrator to set up employee list.");
+            }
+        }
+    }, (error) => {
+        // Handle expected timing issue: permission denied before token is fully attached
+        if (error.code !== 'permission-denied') { 
+            console.error("Firestore (Auth List) error:", error);
+            setStatusMessage(`Data Error (Auth List): ${error.message}`);
+        } else if (isAdmin) {
+            // If admin gets permission denied, trigger immediate check/setup
+             initializeAuthListAutomatically({});
+        }
+    });
+
+    return () => unsubscribeAuth();
+  }, [db, isAuthReady, userId, isAdmin, initializeAuthListAutomatically]); 
+
+
+  // 3. Real-time Listener for Today's Punches (User View - Gated)
+  useEffect(() => {
+    if (!db || !isAuthorizedEmployee || Object.keys(authList).length === 0) return; 
+
+    const collectionFunc = getGlobalFunc('collection');
+    const queryFunc = getGlobalFunc('query');
+    const whereFunc = getGlobalFunc('where');
+    const onSnapshotFunc = getGlobalFunc('onSnapshot');
+
+    const punchesRef = collectionFunc(db, BREAK_PUNCHES_COLLECTION_PATH);
+    
+    // Query only by dateKey and filter client-side by employeeId
+    const userQuery = queryFunc(
+      punchesRef,
+      whereFunc("dateKey", "==", getTodayDateKey()),
+    );
+
+    const unsubscribeUser = onSnapshotFunc(userQuery, (snapshot) => {
+      let fetchedPunches = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })).filter(punch => punch.employeeId === userId); 
+      
+      fetchedPunches.sort((a, b) => 
+        (a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime()) - 
+        (b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp).getTime())
+      );
+      
+      setPunches(fetchedPunches);
+      
+      const { totalMs, lastPunchType, breakCount } = calculateTotalBreakTime(fetchedPunches);
+      setTotalBreakMs(totalMs);
+      setLastPunchType(lastPunchType);
+      setDailyBreakCount(breakCount); 
+
+    }, (error) => {
+      console.error("Firestore (User Daily) error:", error);
+      setStatusMessage(`Data Error (User Daily View): ${error.message}`);
+    });
+
+    return () => unsubscribeUser();
+  }, [db, isAuthorizedEmployee, authList, userId]); 
+
+  // 4. Real-time Listener for ALL Punches (Admin View - Gated)
+  useEffect(() => {
+    if (!db || !isAdmin || Object.keys(authList).length === 0) return; 
+
+    const collectionFunc = getGlobalFunc('collection');
+    const queryFunc = getGlobalFunc('query');
+    const onSnapshotFunc = getGlobalFunc('onSnapshot');
+    
+    const punchesRef = collectionFunc(db, BREAK_PUNCHES_COLLECTION_PATH);
+    const adminQuery = queryFunc(punchesRef);
+
+    const unsubscribeAdmin = onSnapshotFunc(adminQuery, (snapshot) => {
+      const fetchedAllPunches = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      
+      fetchedAllPunches.sort((a, b) => 
+          (b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp).getTime()) -
+          (a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime())
+      );
+
+      setAllPunches(fetchedAllPunches);
+    }, (error) => {
+      console.error("Firestore (Admin) error:", error);
+      setStatusMessage(`Data Error (Admin View): ${error.message}`);
+    });
+
+    return () => unsubscribeAdmin();
+  }, [db, isAdmin, authList]);
+
+
+  // 5. Handle Punch Action (IN or OUT)
+  const handlePunch = async (type) => {
+    if (!db || !userId || !isAuthorizedEmployee) {
+      setStatusMessage("Error: Not authenticated or authorized.");
+      return;
+    }
+
+    if (loading) return;
+    
+    if (type === 'IN' && lastPunchType === 'IN') {
+      setStatusMessage("You are already on break. Punch OUT first.");
+      return;
+    }
+    if (type === 'OUT' && lastPunchType !== 'IN') {
+      setStatusMessage("You must Punch IN before Punching OUT.");
+      return;
+    }
+
+    setLoading(true);
+    setStatusMessage(`Recording ${type} punch...`);
+
+    try {
+      const collectionFunc = getGlobalFunc('collection');
+      const addDocFunc = getGlobalFunc('addDoc');
+      
+      const punchesRef = collectionFunc(db, BREAK_PUNCHES_COLLECTION_PATH);
+      
+      await addDocFunc(punchesRef, {
+        employeeId: userId, 
+        punchType: type,
+        timestamp: new Date(),
+        dateKey: getTodayDateKey(),
+      });
+      
+      setStatusMessage(`${type === 'IN' ? 'Break started' : 'Break ended'} successfully!`);
+    } catch (error) {
+      console.error("Punch recording error:", error);
+      setStatusMessage(`Failed to record punch: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  // --- Employee View Render ---
+  const renderEmployeeView = () => {
+    const todayKey = getTodayDateKey();
+    const userCred = userId?.toLowerCase() || '';
+    const currentUserName = authList[userCred]?.name || authList[userId]?.name || 'Loading...';
+
+    // Check for critical setup state
+    if (!isAuthorizedEmployee && Object.keys(authList).length === 0 && !isAdmin) {
+        return (
+             <div className="w-full max-w-lg p-8 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-lg shadow-lg relative">
+                <h2 className="text-2xl font-bold mb-4">Awaiting Setup</h2>
+                <p>The administrator needs to initialize the employee list before you can punch in. Please try again shortly.</p>
+                <div className="absolute top-4 right-4">
+                    <button onClick={handleLogout} className="flex items-center space-x-1 px-3 py-1 text-sm bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200 transition">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 11.414a1 1 0 000-1.414L15 8.586a1 1 0 00-1.414 1.414L15.586 11H7a1 1 0 100 2h8.586l-2.001 2.001a1 1 0 101.414 1.414l2.414-2.414zM10 2a1 1 0 00-1 1v1a1 1 0 002 0V3a1 1 0 00-1-1zM3 3a1 1 0 00-1 1v12a1 1 0 001 1h5a1 1 0 000-2H4V4h4a1 1 0 100-2H3z"/></svg>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+
+    return (
+        <div className="w-full max-w-lg bg-white shadow-2xl rounded-xl p-8 space-y-6 relative">
+            
+            {/* LOGOUT BUTTON */}
+            <div className="absolute top-4 right-4">
+                <button onClick={handleLogout} className="flex items-center space-x-1 px-3 py-1 text-sm bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 11.414a1 1 0 000-1.414L15 8.586a1 1 0 00-1.414 1.414L15.586 11H7a1 1 0 100 2h8.586l-2.001 2.001a1 1 0 101.414 1.414l2.414-2.414zM10 2a1 1 0 00-1 1v1a1 1 0 002 0V3a1 1 0 00-1-1zM3 3a1 1 0 00-1 1v12a1 1 0 001 1h5a1 1 0 000-2H4V4h4a1 1 0 100-2H3z"/></svg>
+                    <span>Logout</span>
+                </button>
+            </div>
+
+
+            {/* Header and User Info */}
+            <div className="text-center pb-4 border-b border-gray-100">
+                <h1 className="text-3xl font-extrabold text-blue-700 tracking-tight">
+                    SQAFK Break Timer
+                </h1>
+                <p className="mt-2 text-sm text-gray-500">
+                    {todayKey}
+                </p>
+                <p className="mt-1 text-base text-gray-600 truncate font-semibold">
+                    {currentUserName}
+                </p>
+            </div>
+
+            {/* Status and Summary */}
+            <div className="text-center p-3 rounded-lg bg-blue-50">
+                <p className="text-xl font-bold text-gray-700">
+                    Total Break Today:
+                </p>
+                <p className={`text-4xl font-extrabold mt-1 ${lastPunchType === 'IN' ? 'text-red-500 animate-pulse' : 'text-green-600'}`}>
+                    {formatDuration(totalBreakMs)}
+                </p>
+                <p className="text-sm mt-2 font-medium text-gray-600">
+                    Status: {lastPunchType === 'IN' ? 'Currently on Break' : 'Available'}
+                </p>
+            </div>
+            
+            {/* Break Count */}
+            <div className="text-center p-3 rounded-lg bg-indigo-50">
+                <p className="text-base font-semibold text-gray-700">
+                    Breaks Completed (Today):
+                </p>
+                <p className="text-3xl font-extrabold mt-1 text-indigo-600">
+                    {dailyBreakCount}
+                </p>
+            </div>
+
+
+            {/* Punch Buttons */}
+            <div className="grid grid-cols-2 gap-4">
+                <button
+                    onClick={() => handlePunch('IN')}
+                    disabled={loading || lastPunchType === 'IN'}
+                    className="w-full px-6 py-4 text-white font-semibold rounded-lg shadow-md transition duration-150 
+                            bg-green-500 hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed
+                            focus:outline-none focus:ring-4 focus:ring-green-300 transform active:scale-95"
+                >
+                    Punch IN (Break)
+                </button>
+                <button
+                    onClick={() => handlePunch('OUT')}
+                    disabled={loading || lastPunchType !== 'IN'}
+                    className="w-full px-6 py-4 text-white font-semibold rounded-lg shadow-md transition duration-150 
+                            bg-red-500 hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed
+                            focus:outline-none focus:ring-4 focus:ring-red-300 transform active:scale-95"
+                >
+                    Punch OUT (Stop)
+                </button>
+            </div>
+            
+            {/* Recent Punches Log */}
+            <div className="mt-6 border-t pt-4">
+                <h2 className="text-lg font-semibold text-gray-700 mb-3">Today's Punch Log</h2>
+                <div className="max-h-48 overflow-y-auto space-y-2 p-2 bg-gray-50 rounded-lg">
+                    {punches.length === 0 ? (
+                        <p className="text-center text-gray-500 py-4">No punches recorded today.</p>
+                    ) : (
+                        punches.slice().reverse().map((punch, index) => (
+                            <div key={punch.id || index} className="flex justify-between items-center p-2 rounded-md transition duration-100 ease-in-out"
+                                style={{ backgroundColor: punch.punchType === 'IN' ? '#e9f5e9' : '#fbebeb' }}>
+                                <span className={`font-medium ${punch.punchType === 'IN' ? 'text-green-700' : 'text-red-700'}`}>
+                                    {punch.punchType === 'IN' ? 'BREAK START' : 'BREAK END'}
+                                </span>
+                                <span className="text-sm font-mono text-gray-800">
+                                    {punch.timestamp?.toDate ? punch.timestamp.toDate().toLocaleTimeString() : new Date(punch.timestamp).toLocaleTimeString()}
+                                </span>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+  }
+
+  // --- Main Render ---
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start py-8 px-4 relative">
+        
+        {/* Loading/Auth State */}
+        {loading || !isAuthReady ? (
+            <div className="text-center py-20 text-lg text-gray-500">Initializing and authenticating user credentials...</div>
+        ) : !isAuthorizedEmployee && Object.keys(authList).length > 0 ? (
+            // Unauthorized State (List exists, but user isn't in it)
+            <div className="w-full max-w-lg p-8 bg-red-100 border-l-4 border-red-500 text-red-700 rounded-lg shadow-lg relative">
+                <h2 className="text-2xl font-bold mb-4">Access Restricted</h2>
+                <p>{statusMessage}</p>
+                <p className="mt-4 text-sm font-semibold">Your ID ({userId}) is not authorized to use this tracker. Please contact the administrator.</p>
+                <button
+                    onClick={handleLogout}
+                    className="mt-4 flex items-center space-x-1 px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
+                >
+                    Logout
+                </button>
+            </div>
+        ) : (
+            // Authorized Content OR Admin Setup Required
+            <>
+                {/* View Toggle (Only visible to the specific Admin ID) */}
+                {isAdmin && Object.keys(authList).length > 0 && (
+                    <div className="mb-6 w-full max-w-lg md:max-w-5xl flex justify-between items-center p-3 bg-white shadow-lg rounded-xl">
+                        <h2 className="text-xl font-bold text-gray-700">
+                            {isAdminView ? 'Admin View' : 'Employee View'}
+                        </h2>
+                        <button
+                            onClick={() => setIsAdminView(!isAdminView)}
+                            className="px-4 py-2 text-sm font-semibold rounded-full transition duration-150 shadow-md
+                                       bg-yellow-500 text-white hover:bg-yellow-600 transform active:scale-95"
+                        >
+                            Switch to {isAdminView ? 'Employee' : 'Admin'} Panel
+                        </button>
+                    </div>
+                )}
+                
+                {/* Status Message */}
+                <div className="mb-4 text-center text-sm p-2 text-gray-500 w-full max-w-lg md:max-w-5xl">
+                    {statusMessage}
+                </div>
+
+                {/* Conditional View Rendering */}
+                {isAdminView && isAdmin ? ( 
+                    <AdminDashboard 
+                        db={db} 
+                        userId={userId}
+                        allPunches={allPunches} 
+                        statusMessage={statusMessage}
+                        setStatusMessage={setStatusMessage}
+                        authList={authList}
+                        isAuthReady={isAuthReady}
+                        calculateTotalBreakTime={calculateTotalBreakTime} 
+                    />
+                ) : (
+                    renderEmployeeView()
+                )}
+            </>
+        )}
+    </div>
+  );
+};
+
+// --- Execution starts here ---
+window.onload = function() {
+    // Check if ReactDOM is available and initialize the app
+    if (typeof ReactDOM !== 'undefined' && typeof App !== 'undefined') {
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+    } else {
+         // Fallback if environment hasn't loaded dependencies properly
+         console.error("ReactDOM or App component not defined. Check script loading order.");
+    }
+};
+    </script>
+</body>
+</html>
