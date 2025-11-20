@@ -3,36 +3,88 @@ function doPost(e) {
   lock.tryLock(10000);
 
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    // Sheet 1: Punches
+    let punchSheet = ss.getSheets()[0]; 
+    
+    // Sheet 2: Employees (Create if missing)
+    let empSheet = ss.getSheetByName("Employees");
+    if (!empSheet) {
+      empSheet = ss.insertSheet("Employees");
+      empSheet.appendRow(["Email", "Name"]);
+      // Add Admin by default
+      empSheet.appendRow(["yuvraj.karki@bergtechnologies.co.in", "Yuvraj Karki (Admin)"]); 
+    }
+
+    // Parse Data (Handles text/plain to fix GitHub CORS issue)
     const data = JSON.parse(e.postData.contents);
+
+    // --- Action: Add New Employee ---
+    if (data.action === 'addUser') {
+      // Check if exists first
+      const existing = empSheet.getDataRange().getValues().find(r => r[0] == data.email);
+      if (!existing) {
+        empSheet.appendRow([data.email, data.name]);
+      }
+      return response({ result: 'success', msg: 'User Added' });
+    }
+
+    // --- Action: Remove Employee ---
+    if (data.action === 'removeUser') {
+      const rows = empSheet.getDataRange().getValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i][0] == data.email) {
+          empSheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      return response({ result: 'success', msg: 'User Removed' });
+    }
+
+    // --- Default Action: Record Punch ---
+    // Format: Name | Type | Time | Date
+    punchSheet.appendRow([data.name, data.punchType, "'" + data.timeReadable, data.dateKey, data.employeeId]);
     
-    // Append: Name, Type, Readable Time, Date Key
-    // We force the Time cell to be text to prevent auto-formatting issues
-    sheet.appendRow([data.name, data.punchType, "'" + data.timeReadable, data.dateKey]);
-    
-    return ContentService.createTextOutput(JSON.stringify({ result: 'success' }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (e) {
-    return ContentService.createTextOutput(JSON.stringify({ result: 'error', error: e.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return response({ result: 'success' });
+
+  } catch (err) {
+    return response({ result: 'error', error: err.toString() });
   } finally {
     lock.releaseLock();
   }
 }
 
 function doGet(e) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-  const rows = sheet.getDataRange().getValues();
-  const headers = rows.shift(); // Remove headers
-  
-  // Map rows to object based on new column order
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const punchSheet = ss.getSheets()[0];
+  let empSheet = ss.getSheetByName("Employees");
+
+  // 1. Request for User List
+  if (e.parameter && e.parameter.type === 'getUsers') {
+    if (!empSheet) return response([]);
+    const rows = empSheet.getDataRange().getValues();
+    rows.shift(); // Remove header
+    // Return list of {email, name}
+    const users = rows.filter(r => r[0]).map(r => ({ email: r[0], name: r[1] }));
+    return response(users);
+  }
+
+  // 2. Request for Punch Data (Default)
+  const rows = punchSheet.getDataRange().getValues();
+  rows.shift(); // Remove header
+  // Map columns: Name(0), Type(1), Time(2), Date(3), Email(4)
   const data = rows.map(row => ({
     name: row[0],
     punchType: row[1],
     timeReadable: row[2],
-    dateKey: row[3]
+    dateKey: row[3],
+    employeeId: row[4] // We added email to col 5 for better filtering
   }));
 
+  return response(data);
+}
+
+function response(data) {
   return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
